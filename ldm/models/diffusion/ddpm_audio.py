@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from tqdm import tqdm
 from torchvision.utils import make_grid
-from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_only
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
@@ -1048,3 +1048,4 @@ class LatentInpaintDiffusion(LatentFinetuneDiffusion):
         log["masked_image"] = rearrange(args[0]["masked_image"],
                                         'b h w c -> b c h w').to(memory_format=torch.contiguous_format).float()
         return log
+
