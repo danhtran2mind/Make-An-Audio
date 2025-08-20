@@ -51,7 +51,9 @@ class MelNet(nn.Module):
         self.fmax = hparams['fmax']
         self.device = device
         
-        mel = librosa_mel_fn(self.sampling_rate, self.n_fft, self.num_mels, self.fmin, self.fmax)
+        mel = librosa.filters.mel(sr=self.sampling_rate, n_fft=self.n_fft, 
+                                  n_mels=self.num_mels, fmin=self.fmin, fmax=self.fmax)
+        
         self.mel_basis = torch.from_numpy(mel).float().to(self.device)
         self.hann_window = torch.hann_window(self.win_size).to(self.device)
 
