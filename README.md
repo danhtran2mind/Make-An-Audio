@@ -58,7 +58,12 @@ python gen_wav.py --prompt "a bird chirps" --ddim_steps 100 --duration 10 --scal
 # Train
 ## dataset preparation
 We can't provide the dataset download link for copyright issues. We provide the process code to generate melspec.  
-Before training, we need to construct the dataset information into a tsv file, which includes name (id for each audio), dataset (which dataset the audio belongs to), audio_path (the path of .wav file),caption (the caption of the audio) ,mel_path (the processed melspec file path of each audio). We provide a tsv file of audiocaps test set: ./data/audiocaps_test.tsv as a sample.
+Before training, we need to construct the dataset information into a tsv file, which includes name (id for each audio), dataset (which dataset the audio belongs to), audio_path (the path of .wav file),caption (the caption of the audio) ,mel_path (the processed melspec file path of each audio). We provide a tsv file of audiocaps test set: ./data/musicBecnh_metadata.tsv as a sample.
+
+```bash
+python scripts/process_datasets.py
+```
+
 ### generate the melspec file of audio
 Assume you have already got a tsv file to link each caption to its audio_path, which mean the tsv_file have "name","audio_path","dataset" and "caption" columns in it.
 To get the melspec of audio, run the following command, which will save mels in ./processed
