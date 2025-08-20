@@ -7,8 +7,6 @@ from omegaconf import OmegaConf
 import argparse
 import soundfile
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 SAMPLE_RATE = 16000
 
 def parse_args():
@@ -55,12 +53,20 @@ def parse_args():
         default='test', 
         help="audio path name for saving",
     ) 
+
+    parser.add_argument(
+        "--device",
+        type=str,
+        default='cuda' if torch.cuda.is_available() else 'cpu',
+        help="device to use for computation (e.g., 'cuda' or 'cpu')",
+    )
+    
     return parser.parse_args()
 
 def initialize_model(config, ckpt,device=device):
     config = OmegaConf.load(config)
     model = instantiate_from_config(config.model)
-    model.load_state_dict(torch.load(ckpt,map_location='cpu', weights_only=True)["state_dict"], strict=False)
+    model.load_state_dict(torch.load(ckpt,map_location='cpu', weights_only=False)["state_dict"], strict=False)
 
     model = model.to(device)
     model.cond_stage_model.to(model.device)
@@ -76,7 +82,7 @@ def dur_to_size(duration):
         latent_width = (latent_width // 4 + 1) * 4
     return latent_width
 
-def gen_wav(sampler,vocoder,prompt,ddim_steps,scale,duration,n_samples):
+def gen_wav(sampler, vocoder,prompt, ddim_steps, scale, duration, n_samples):
     latent_width = dur_to_size(duration)
     start_code = torch.randn(n_samples, sampler.model.first_stage_model.embed_dim, 10, latent_width).to(device=device, dtype=torch.float32)
     
@@ -106,6 +112,7 @@ def gen_wav(sampler,vocoder,prompt,ddim_steps,scale,duration,n_samples):
 
 if __name__ == '__main__':
     args = parse_args()
+    device = args.device  # Use the device from command-line argument
     sampler = initialize_model('configs/text_to_audio/txt2audio_args.yaml', 'useful_ckpts/maa1_full.ckpt')
     vocoder = VocoderBigVGAN('useful_ckpts/bigvgan',device=device)
     print("Generating audios, it may takes a long time depending on your gpu performance")
