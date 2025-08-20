@@ -6,7 +6,9 @@ from ldm.util import instantiate_from_config
 from omegaconf import OmegaConf
 import argparse
 import soundfile
-device = 'cuda' # change to 'cpu‘ if you do not have gpu. generating with cpu is very slow.
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 SAMPLE_RATE = 16000
 
 def parse_args():
@@ -58,7 +60,7 @@ def parse_args():
 def initialize_model(config, ckpt,device=device):
     config = OmegaConf.load(config)
     model = instantiate_from_config(config.model)
-    model.load_state_dict(torch.load(ckpt,map_location='cpu')["state_dict"], strict=False)
+    model.load_state_dict(torch.load(ckpt,map_location='cpu', weights_only=True)["state_dict"], strict=False)
 
     model = model.to(device)
     model.cond_stage_model.to(model.device)
