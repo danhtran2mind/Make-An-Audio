@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from pytorch_lightning import seed_everything
 from vocoder.bigvgan.models import VocoderBigVGAN
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.util import instantiate_from_config
@@ -91,8 +92,7 @@ def dur_to_size(duration):
 
 def gen_wav(sampler, vocoder, prompt, ddim_steps, scale, duration, n_samples, seed=None):
     if seed is not None:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+        seed_everything(seed, workers=True)
         
     latent_width = dur_to_size(duration)
     start_code = torch.randn(n_samples, sampler.model.first_stage_model.embed_dim, 10, latent_width).to(device=device, dtype=torch.float32)
@@ -124,6 +124,10 @@ def gen_wav(sampler, vocoder, prompt, ddim_steps, scale, duration, n_samples, se
 if __name__ == '__main__':
     args = parse_args()
     device = args.device
+    # Set seed before any random operations
+    if args.seed is not None:
+        seed_everything(args.seed, workers=True)
+    
     sampler = initialize_model('configs/text_to_audio/txt2audio_args.yaml', 
                              'useful_ckpts/maa1_full.ckpt', device=device)
     
