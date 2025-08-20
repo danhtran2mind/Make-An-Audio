@@ -63,7 +63,7 @@ def parse_args():
     
     return parser.parse_args()
 
-def initialize_model(config, ckpt, device=device):
+def initialize_model(config, ckpt, device="cuda"):
     config = OmegaConf.load(config)
     model = instantiate_from_config(config.model)
     model.load_state_dict(torch.load(ckpt,map_location='cpu', weights_only=False)["state_dict"], strict=False)
