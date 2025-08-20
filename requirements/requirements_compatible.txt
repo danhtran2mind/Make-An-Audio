@@ -2,6 +2,8 @@
 torch==2.6.0
 torchaudio==2.6.0
 torchvision==0.21.0
+torch-fidelity==0.3.0
+importlib_resources==6.5.0
 scipy==1.15.3
 tqdm==4.67.1
 omegaconf==2.3.0
@@ -15,4 +17,5 @@ transformers==4.52.4
 ftfy==6.3.1
 pytorch_lightning==2.5.2
 torchmetrics==1.7.3
+-e git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers
 datasets==3.5.0
