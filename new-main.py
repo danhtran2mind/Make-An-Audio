@@ -1,8 +1,4 @@
-import argparse
-import os
-import sys
-import datetime
-import glob
+import argparse, os, sys, datetime, glob
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import numpy as np
 import time
@@ -18,9 +14,12 @@ from functools import partial
 import ldm
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+from pytorch_lightning.callbacks import ModelCheckpoint, Callback,LearningRateMonitor
+from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_info
 from ldm.util import instantiate_from_config
+
+
 
 
 def get_parser(**parser_kwargs):
@@ -136,71 +135,7 @@ def get_parser(**parser_kwargs):
         default=True,
         help="scale base-lr by ngpu * batch_size * n_accumulate",
     )
-
-    # Manually add key Trainer arguments
-    parser.add_argument(
-        "--accelerator",
-        type=str,
-        default="auto",
-        help="Accelerator type (e.g., 'gpu', 'cpu', 'tpu')",
-    )
-    parser.add_argument(
-        "--devices",
-        type=str,
-        default="auto",
-        help="Number of devices or specific device indices (e.g., '1', '0,1')",
-    )
-    parser.add_argument(
-        "--max_epochs",
-        type=int,
-        default=None,
-        help="Maximum number of epochs to train",
-    )
-    parser.add_argument(
-        "--min_epochs",
-        type=int,
-        default=None,
-        help="Minimum number of epochs to train",
-    )
-    parser.add_argument(
-        "--max_steps",
-        type=int,
-        default=-1,
-        help="Maximum number of training steps",
-    )
-    parser.add_argument(
-        "--accumulate_grad_batches",
-        type=int,
-        default=1,
-        help="Number of batches to accumulate gradients over",
-    )
-    parser.add_argument(
-        "--precision",
-        type=str,
-        default="32",
-        help="Precision for training (e.g., '16-mixed', '32', 'bf16-mixed')",
-    )
-    parser.add_argument(
-        "--strategy",
-        type=str,
-        default="auto",
-        help="Training strategy (e.g., 'ddp', 'ddp_spawn', 'auto')",
-    )
-    parser.add_argument(
-        "--num_nodes",
-        type=int,
-        default=1,
-        help="Number of nodes for distributed training",
-    )
-    parser.add_argument(
-        "--log_every_n_steps",
-        type=int,
-        default=50,
-        help="Log metrics every N steps",
-    )
-
     return parser
-
 
 def getrank():
     def is_dist_avail_and_initialized():
@@ -213,19 +148,9 @@ def getrank():
         return 0
     return dist.get_rank()
 
-
 def nondefault_trainer_args(opt):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--accelerator", type=str, default="auto")
-    parser.add_argument("--devices", type=str, default="auto")
-    parser.add_argument("--max_epochs", type=int, default=None)
-    parser.add_argument("--min_epochs", type=int, default=None)
-    parser.add_argument("--max_steps", type=int, default=-1)
-    parser.add_argument("--accumulate_grad_batches", type=int, default=1)
-    parser.add_argument("--precision", type=str, default="32")
-    parser.add_argument("--strategy", type=str, default="auto")
-    parser.add_argument("--num_nodes", type=int, default=1)
-    parser.add_argument("--log_every_n_steps", type=int, default=50)
+    parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args([])
     return sorted(k for k in vars(args) if getattr(opt, k) != getattr(args, k))
 
@@ -245,12 +170,14 @@ class WrappedDataset(Dataset):
 
 def worker_init_fn(_):
     worker_info = torch.utils.data.get_worker_info()
+
     dataset = worker_info.dataset
     worker_id = worker_info.id
+
     return np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 
-class DataModuleFromConfig(pl.LightningDataModule):
+class DataModuleFromConfig(pl.LightningDataModule):# batchloader outputshape should be (b,h,w,c) and it will be permuted to (b,c,h,w) in autoencoder.get_input()
     def __init__(self, batch_size, train=None, validation=None, test=None, predict=None,
                  wrap=False, num_workers=None, shuffle_test_loader=False, use_worker_init_fn=False,
                  shuffle_val_dataloader=False):
@@ -287,20 +214,21 @@ class DataModuleFromConfig(pl.LightningDataModule):
 
     def _train_dataloader(self):
         init_fn = None
-        return DataLoader(self.datasets["train"], batch_size=self.batch_size,
-                          num_workers=self.num_workers, shuffle=True,
-                          worker_init_fn=init_fn)
+        return DataLoader(self.datasets["train"], batch_size=self.batch_size ,# sampler=DistributedSampler # np.arange(100),
+                            num_workers=self.num_workers, shuffle=True,
+                            worker_init_fn=init_fn)
 
     def _val_dataloader(self, shuffle=False):
         init_fn = None
         return DataLoader(self.datasets["validation"],
-                          batch_size=self.batch_size,
-                          num_workers=self.num_workers,
-                          worker_init_fn=init_fn,
-                          shuffle=shuffle)
+                            batch_size=self.batch_size,
+                            num_workers=self.num_workers,
+                            worker_init_fn=init_fn,
+                            shuffle=shuffle)
 
     def _test_dataloader(self, shuffle=False):
         init_fn = None
+        # do not shuffle dataloader for iterable dataset
         return DataLoader(self.datasets["test"], batch_size=self.batch_size,
                           num_workers=self.num_workers, worker_init_fn=init_fn, shuffle=shuffle)
 
@@ -311,13 +239,14 @@ class DataModuleFromConfig(pl.LightningDataModule):
 
 
 class SpectrogramDataModuleFromConfig(DataModuleFromConfig):
-    def __init__(self, batch_size, num_workers, spec_dir_path=None, main_spec_dir_path=None, other_spec_dir_path=None,
-                 mel_num=None, spec_len=None, spec_crop_len=1248, drop=0, mode='pad',
+    '''avoiding duplication of hyper-parameters in the config by gross patching here '''
+    def __init__(self, batch_size, num_workers,spec_dir_path=None,main_spec_dir_path=None,other_spec_dir_path=None,
+                  mel_num=None, spec_len=None, spec_crop_len=1248,drop=0,mode='pad',
                  require_caption=True, train=None, validation=None, test=None, predict=None, wrap=False):
         specs_dataset_cfg = {
             'spec_dir_path': spec_dir_path,
-            'main_spec_dir_path': main_spec_dir_path,
-            'other_spec_dir_path': other_spec_dir_path,
+            'main_spec_dir_path':main_spec_dir_path,
+            'other_spec_dir_path':other_spec_dir_path,
             'require_caption': require_caption,
             'mel_num': mel_num,
             'spec_len': spec_len,
@@ -331,7 +260,8 @@ class SpectrogramDataModuleFromConfig(DataModuleFromConfig):
         super().__init__(batch_size, train, validation, test, predict, wrap, num_workers)
 
 
-class SetupCallback(Callback):
+
+class SetupCallback(Callback):# will not load ckpt, just set directories for the experiment
     def __init__(self, resume, now, logdir, ckptdir, cfgdir, config, lightning_config):
         super().__init__()
         self.resume = resume
@@ -343,13 +273,14 @@ class SetupCallback(Callback):
         self.lightning_config = lightning_config
 
     def on_exception(self, trainer, pl_module, exception):
-        if getrank() == 0:  # Use getrank() instead of trainer.global_rank
+        if trainer.global_rank == 0:
             print("Summoning checkpoint.")
             ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
             trainer.save_checkpoint(ckpt_path)
 
     def on_fit_start(self, trainer, pl_module):
-        if getrank() == 0:  # Use getrank() instead of trainer.global_rank
+        if trainer.global_rank == 0:
+            # Create logdirs and save configs
             os.makedirs(self.logdir, exist_ok=True)
             os.makedirs(self.ckptdir, exist_ok=True)
             os.makedirs(self.cfgdir, exist_ok=True)
@@ -368,6 +299,7 @@ class SetupCallback(Callback):
                            os.path.join(self.cfgdir, "{}-lightning.yaml".format(self.now)))
 
         else:
+            # ModelCheckpoint callback created log directory --- remove it
             if not self.resume and os.path.exists(self.logdir):
                 dst, name = os.path.split(self.logdir)
                 dst = os.path.join(dst, "child_runs", name)
@@ -380,8 +312,8 @@ class SetupCallback(Callback):
 
 class ImageLogger(Callback):
     def __init__(self, batch_frequency, max_images, increase_log_steps=True,
-                 disabled=False, log_on_batch_idx=False, log_first_step=False, melvmin=0, melvmax=1,
-                 log_images_kwargs=None, **kwargs):
+                 disabled=False, log_on_batch_idx=False, log_first_step=False,melvmin=0,melvmax=1,
+                 log_images_kwargs=None,**kwargs):
         super().__init__()
         self.batch_freq = batch_frequency
         self.max_images = max_images
@@ -395,45 +327,50 @@ class ImageLogger(Callback):
         self.log_on_batch_idx = log_on_batch_idx
         self.log_images_kwargs = log_images_kwargs if log_images_kwargs else {}
         self.log_first_step = log_first_step
-        self.melvmin = melvmin
-        self.melvmax = melvmax
+        self.melvmin=melvmin
+        self.melvmax=melvmax
 
     @rank_zero_only
     def _log(self, pl_module, images, batch_idx, split):
         for k in images:
             grid = torchvision.utils.make_grid(images[k])
             fig = plt.figure()
-            plt.pcolor(grid.mean(dim=0), vmin=self.melvmin, vmax=self.melvmax)
+            plt.pcolor(grid.mean(dim=0),vmin=self.melvmin,vmax=self.melvmax)
             tag = f"{split}/{k}"
-            pl_module.logger.experiment.add_figure(tag, fig, global_step=pl_module.global_step)
+            pl_module.logger.experiment.add_figure(tag, fig,global_step=pl_module.global_step)
 
     @rank_zero_only
     def log_local(self, save_dir, split, images,
                   global_step, current_epoch, batch_idx):
         root = os.path.join(save_dir, "images", split)
         for k in images:
-            grid = torchvision.utils.make_grid(images[k], nrow=4)
-            grid = grid.mean(dim=0)
+            grid = torchvision.utils.make_grid(images[k], nrow=4)#  c=3,h,w
+            grid = grid.mean(dim=0)# to 1 channel
             grid = grid.numpy()
             filename = "{}_gs-{:06}_e-{:06}_b-{:06}.png".format(
-                k, global_step, current_epoch, batch_idx)
+                k,
+                global_step,
+                current_epoch,
+                batch_idx)
             path = os.path.join(root, filename)
             os.makedirs(os.path.split(path)[0], exist_ok=True)
-            plt.imsave(path, grid, vmin=self.melvmin, vmax=self.melvmax)
+            plt.imsave(path,grid,vmin=self.melvmin,vmax=self.melvmax)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
         check_idx = batch_idx if self.log_on_batch_idx else pl_module.global_step
-        if (self.check_frequency(check_idx) and
+
+        if (self.check_frequency(check_idx) and  # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
                 self.max_images > 0):
             logger = type(pl_module.logger)
+
             is_train = pl_module.training
             if is_train:
                 pl_module.eval()
 
-            with torch.no_grad():
-                images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)
+            with torch.no_grad():# 这里会调用ddpm中的log_images
+                images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)# images is a dict
 
             for k in images.keys():
                 N = min(images[k].shape[0], self.max_images)
@@ -459,8 +396,9 @@ class ImageLogger(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         if not self.disabled and (pl_module.global_step > 0 or self.log_first_step):
             self.log_img(pl_module, batch, batch_idx, split="train")
+        # pass
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx,dataloader_idx):
         if not self.disabled and pl_module.global_step > 0:
             self.log_img(pl_module, batch, batch_idx, split="val")
         if hasattr(pl_module, 'calibrate_grad_norm'):
@@ -469,11 +407,9 @@ class ImageLogger(Callback):
 
 
 class AudioLogger(ImageLogger):
-    def __init__(self, batch_frequency, max_images, increase_log_steps=True, melvmin=0, melvmax=1, disabled=False,
-                 log_on_batch_idx=False, log_first_step=False, log_images_kwargs=None, for_specs=False,
-                 vocoder_cfg=None, spec_dir_name=None, sample_rate=None, **kwargs):
-        super().__init__(batch_frequency, max_images, increase_log_steps, disabled, log_on_batch_idx, log_first_step,
-                        melvmin, melvmax, log_images_kwargs)
+    def __init__(self, batch_frequency, max_images, increase_log_steps=True, melvmin=0,melvmax=1,disabled=False, log_on_batch_idx=False, log_first_step=False,
+                 log_images_kwargs=None, for_specs=False, vocoder_cfg=None, spec_dir_name=None, sample_rate=None,**kwargs):
+        super().__init__(batch_frequency, max_images,  increase_log_steps,  disabled, log_on_batch_idx, log_first_step, melvmin,melvmax,log_images_kwargs)
         self.for_specs = for_specs
         self.spec_dir_name = spec_dir_name
         self.sample_rate = sample_rate
@@ -484,50 +420,64 @@ class AudioLogger(ImageLogger):
     def _visualize_attention(self, attention, scale_by_prior=True):
         if scale_by_prior:
             B, H, T, T = attention.shape
+            # attention weight is 1/T: if we have a seq with length 3 the weights are 1/3, 1/3, and 1/3
+            # making T by T matrix with zeros in the upper triangular part
             attention_uniform_prior = 1 / torch.arange(1, T+1).view(1, T, 1).repeat(B, 1, T)
             attention_uniform_prior = attention_uniform_prior.tril().view(B, 1, T, T).to(attention.device)
             attention = attention - attention_uniform_prior
+
         attention_agg = attention.sum(dim=1, keepdims=True)
         return attention_agg
 
     def _log_rec_audio(self, specs, tag, global_step, pl_module=None, save_rec_path=None):
+
+        # specs are (B, 1, F, T)
         for i, spec in enumerate(specs):
             spec = spec.data.squeeze(0).cpu().numpy()
-            if spec.shape[0] != 80:
-                continue
+            if spec.shape[0] != 80: continue
             wave = self.vocoder.vocode(spec)
             wave = torch.from_numpy(wave).unsqueeze(0)
             if pl_module is not None:
                 pl_module.logger.experiment.add_audio(f'{tag}_{i}', wave, global_step, self.sample_rate)
+            # in case we would like to save it on disk
             if save_rec_path is not None:
                 soundfile.write(save_rec_path, wave.squeeze(0).numpy(), self.sample_rate, 'FLOAT')
 
     @rank_zero_only
     def _log(self, pl_module, images, batch_idx, split):
-        for k in images:
+        for k in images: # images is a dict,images[k]'s shape is (B,C,H,W)
             tag = f'{split}/{k}'
             if self.for_specs:
+                # flipping values along frequency dim, otherwise mels are upside-down (1, F, T)
                 grid = torchvision.utils.make_grid(images[k].flip(dims=(2,)), nrow=1)
+                # also reconstruct waveform given the spec and inv_transform
                 if k not in ['conditioning', 'conditioning_rec', 'att_nopix', 'att_half', 'att_det']:
                     self._log_rec_audio(images[k], tag, pl_module.global_step, pl_module=pl_module)
             else:
-                grid = torchvision.utils.make_grid(images[k])
+                grid = torchvision.utils.make_grid(images[k])# (B,C=1 or 3,H,W) -> (C=3,B*H,W)
+                # attention is already in [0, 1] therefore ignoring this line
             fig = plt.figure()
-            plt.pcolor(grid.mean(dim=0), vmin=self.melvmin, vmax=self.melvmax)
-            pl_module.logger.experiment.add_figure(tag, fig, global_step=pl_module.global_step)
+            plt.pcolor(grid.mean(dim=0),vmin=self.melvmin,vmax=self.melvmax)
+            pl_module.logger.experiment.add_figure(tag, fig,global_step=pl_module.global_step)
 
     @rank_zero_only
-    def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
+    def log_local(self, save_dir, split, images,
+                  global_step, current_epoch, batch_idx):
         root = os.path.join(save_dir, "images", split)
         for k in images:
             grid = torchvision.utils.make_grid(images[k], nrow=4)
             grid = grid.mean(dim=0)
             grid = grid.numpy()
             filename = "{}_gs-{:06}_e-{:06}_b-{:06}.png".format(
-                k, global_step, current_epoch, batch_idx)
+                k,
+                global_step,
+                current_epoch,
+                batch_idx)
             path = os.path.join(root, filename)
             os.makedirs(os.path.split(path)[0], exist_ok=True)
-            plt.imsave(path, grid, vmin=self.melvmin, vmax=self.melvmax)
+            plt.imsave(path,grid,vmin=self.melvmin,vmax=self.melvmax)
+
+            # also save audio on the disk
             if self.for_specs:
                 tag = f'{split}/{k}'
                 filename = filename.replace('.png', '.wav')
@@ -537,18 +487,22 @@ class AudioLogger(ImageLogger):
 
 
 class CUDACallback(Callback):
+    # see https://github.com/SeanNaren/minGPT/blob/master/mingpt/callback.py
     def on_train_epoch_start(self, trainer, pl_module):
+        # Reset the memory use counter
         torch.cuda.reset_peak_memory_stats(trainer.strategy.root_device.index)
         torch.cuda.synchronize(trainer.strategy.root_device.index)
         self.start_time = time.time()
 
-    def on_train_epoch_end(self, trainer, pl_module):
+    def on_train_epoch_end(self, trainer, pl_module):# ,outputs： outputs positional argument has been removed in the later pytorch-lighning version。
         torch.cuda.synchronize(trainer.strategy.root_device.index)
         max_memory = torch.cuda.max_memory_allocated(trainer.strategy.root_device.index) / 2 ** 20
         epoch_time = time.time() - self.start_time
+
         try:
             max_memory = trainer.strategy.reduce(max_memory)
             epoch_time = trainer.strategy.reduce(epoch_time)
+
             rank_zero_info(f"Average Epoch time: {epoch_time:.2f} seconds")
             rank_zero_info(f"Average Peak memory {max_memory:.2f}MiB")
         except AttributeError:
@@ -557,10 +511,13 @@ class CUDACallback(Callback):
 
 if __name__ == "__main__":
     now = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    sys.path.append(os.getcwd())
-    parser = get_parser()
-    opt, unknown = parser.parse_known_args()
 
+    sys.path.append(os.getcwd())
+
+    parser = get_parser()
+    parser = Trainer.add_argparse_args(parser)
+
+    opt, unknown = parser.parse_known_args()
     if opt.name and opt.resume:
         raise ValueError(
             "-n/--name and -r/--resume cannot be specified both."
@@ -578,8 +535,9 @@ if __name__ == "__main__":
             assert os.path.isdir(opt.resume), opt.resume
             logdir = opt.resume.rstrip("/")
             ckpt = os.path.join(logdir, "checkpoints", "last.ckpt")
+
         opt.ckpt_path = ckpt
-        base_configs = sorted(glob.glob( os.path.join(logdir, "configs/*.yaml")))
+        base_configs = sorted(glob.glob(os.path.join(logdir, "configs/*.yaml")))
         opt.base = base_configs + opt.base
         _tmp = logdir.split("/")
         nowname = _tmp[-1]
@@ -601,20 +559,24 @@ if __name__ == "__main__":
 
     try:
         # init and save configs
+        print(f"opt.base:{opt.base}")
         configs = [OmegaConf.load(cfg) for cfg in opt.base]
         cli = OmegaConf.from_dotlist(unknown)
         config = OmegaConf.merge(*configs, cli)
         lightning_config = config.pop("lightning", OmegaConf.create())
+        # merge trainer cli with config
         trainer_config = lightning_config.get("trainer", OmegaConf.create())
-        trainer_config["strategy"] = "auto"  # Updated default strategy
+        # default to ddp
+        trainer_config["strategy"] = "ddp" # "ddp" # "ddp_find_unused_parameters_false"
         for k in nondefault_trainer_args(opt):
             trainer_config[k] = getattr(opt, k)
 
-        if trainer_config.get("accelerator") == "cpu" or trainer_config.get("devices") == "0":
+        if not "gpus" in trainer_config:
+            del trainer_config["strategy"]
             cpu = True
         else:
-            devices = trainer_config.get("devices", "auto")
-            print(f"Running on accelerator {trainer_config.get('accelerator', 'auto')} with devices {devices}")
+            gpuinfo = trainer_config["gpus"]
+            print(f"Running on GPUs {gpuinfo}")
             cpu = False
         trainer_opt = argparse.Namespace(**trainer_config)
         lightning_config.trainer = trainer_config
@@ -652,6 +614,7 @@ if __name__ == "__main__":
         logger_cfg = OmegaConf.merge(default_logger_cfg, logger_cfg)
         trainer_kwargs["logger"] = instantiate_from_config(logger_cfg)
 
+
         default_modelckpt_cfg = {
             "target": "pytorch_lightning.callbacks.ModelCheckpoint",
             "params": {
@@ -662,6 +625,7 @@ if __name__ == "__main__":
                 "save_top_k": 5,
             }
         }
+        # use valitdation monitor:
         if hasattr(model, "monitor"):
             print(f"Monitoring {model.monitor} as checkpoint metric.")
             default_modelckpt_cfg["params"]["monitor"] = model.monitor
@@ -669,10 +633,12 @@ if __name__ == "__main__":
         if "modelcheckpoint" in lightning_config:
             modelckpt_cfg = lightning_config.modelcheckpoint
         else:
-            modelckpt_cfg = OmegaConf.create()
+            modelckpt_cfg =  OmegaConf.create()
         modelckpt_cfg = OmegaConf.merge(default_modelckpt_cfg, modelckpt_cfg)
         print(f"Merged modelckpt-cfg: \n{modelckpt_cfg}")
 
+
+        # add callback which sets up log directory
         default_callbacks_cfg = {
             "setup_callback": {
                 "target": "main.SetupCallback",
@@ -697,12 +663,19 @@ if __name__ == "__main__":
                 "target": "main.LearningRateMonitor",
                 "params": {
                     "logging_interval": "step",
+                    # "log_momentum": True
                 }
             },
             "cuda_callback": {
                 "target": "main.CUDACallback"
             },
         }
+
+        # patching the default config for the spectrogram input
+        # if 'Spectrogram' in config.data.target:
+        #    spec_dir_name = Path(config.data.params.spec_dir_path).name
+        #    default_callbacks_cfg['image_logger']['params']['spec_dir_name'] = spec_dir_name
+        #    default_callbacks_cfg['image_logger']['params']['sample_rate'] = config.data.params.sample_rate
 
         default_callbacks_cfg.update({'checkpoint_callback': modelckpt_cfg})
 
@@ -712,36 +685,37 @@ if __name__ == "__main__":
             callbacks_cfg = OmegaConf.create()
 
         if 'metrics_over_trainsteps_checkpoint' in callbacks_cfg:
-            print('Caution: Saving checkpoints every n train steps without deleting. This might require some free space.')
+            print(
+                'Caution: Saving checkpoints every n train steps without deleting. This might require some free space.')
             default_metrics_over_trainsteps_ckpt_dict = {
-                'metrics_over_trainsteps_checkpoint': {
-                    "target": 'pytorch_lightning.callbacks.ModelCheckpoint',
-                    'params': {
-                        "dirpath": os.path.join(ckptdir, 'trainstep_checkpoints'),
-                        "filename": "{epoch:06}-{step:09}",
-                        "verbose": True,
-                        'save_top_k': -1,
-                        'every_n_train_steps': 10000,
-                        'save_weights_only': True
+                'metrics_over_trainsteps_checkpoint':
+                    {"target": 'pytorch_lightning.callbacks.ModelCheckpoint',
+                     'params': {
+                         "dirpath": os.path.join(ckptdir, 'trainstep_checkpoints'),
+                         "filename": "{epoch:06}-{step:09}",
+                         "verbose": True,
+                         'save_top_k': -1,
+                         'every_n_train_steps': 10000,
+                         'save_weights_only': True
+                     }
                     }
-                }
             }
             default_callbacks_cfg.update(default_metrics_over_trainsteps_ckpt_dict)
 
         callbacks_cfg = OmegaConf.merge(default_callbacks_cfg, callbacks_cfg)
-        if 'ignore_keys_callback' in callbacks_cfg and hasattr(trainer_opt, 'ckpt_path'):
+        if 'ignore_keys_callback' in callbacks_cfg and hasattr(trainer_opt, 'ckpt_path'):# false for the former
             callbacks_cfg.ignore_keys_callback.params['ckpt_path'] = trainer_opt.ckpt_path
         elif 'ignore_keys_callback' in callbacks_cfg:
             del callbacks_cfg['ignore_keys_callback']
 
         trainer_kwargs["callbacks"] = [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
 
-        # Initialize trainer with correct method
-        trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
-        # trainer = Trainer(**vars(trainer_opt), **trainer_kwargs)
-        trainer.logdir = logdir
 
-        # data
+
+        trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
+        trainer.logdir = logdir  
+
+        ##### data #####
         data = instantiate_from_config(config.data)
         data.prepare_data()
         data.setup()
@@ -752,7 +726,7 @@ if __name__ == "__main__":
         # configure learning rate
         bs, base_lr = config.data.params.batch_size, config.model.base_learning_rate
         if not cpu:
-            ngpu = len(str(trainer_config.get("devices", "auto")).split(',')) if trainer_config.get("devices") != "auto" else 1
+            ngpu = len(lightning_config.trainer.gpus.strip(",").split(','))
         else:
             ngpu = 1
         if 'accumulate_grad_batches' in lightning_config.trainer:
@@ -771,37 +745,46 @@ if __name__ == "__main__":
             print("++++ NOT USING LR SCALING ++++")
             print(f"Setting learning rate to {model.learning_rate:.2e}")
 
+
         # allow checkpointing via USR1
         def melk(*args, **kwargs):
-            if getrank() == 0:  # Use getrank() instead of trainer.global_rank
+            # run all checkpoint hooks
+            if trainer.global_rank == 0:
                 print("Summoning checkpoint.")
                 ckpt_path = os.path.join(ckptdir, "last.ckpt")
                 trainer.save_checkpoint(ckpt_path)
 
+
         def divein(*args, **kwargs):
-            if getrank() == 0:  # Use getrank() instead of trainer.global_rank
-                import pudb
+            if trainer.global_rank == 0:
+                import pudb;
                 pudb.set_trace()
 
+
         import signal
+
         signal.signal(signal.SIGUSR1, melk)
         signal.signal(signal.SIGUSR2, divein)
-
-        print(f"##### trainer.logdir: {trainer.logdir} #####")
+        print(f"#####  trainer.logdir:{trainer.logdir}  #####")
+        # run
         if opt.train:
-            if hasattr(opt, 'ckpt_path'):
-                trainer.fit(model, data, ckpt_path=opt.ckpt_path)
-            else:
-                trainer.fit(model, data)
+            try:
+                if hasattr(opt,'ckpt_path'):
+                    trainer.fit(model, data,ckpt_path = opt.ckpt_path)
+                else:
+                    trainer.fit(model, data)
+            except Exception:
+                melk()
+                raise
         elif opt.val:
             trainer.validate(model, data)
         if not opt.no_test and not trainer.interrupted:
-            if not opt.train and hasattr(opt, 'ckpt_path'):
-                trainer.test(model, data, ckpt_path=opt.ckpt_path)
-            else:
-                trainer.test(model, data)
+            if not opt.train and hasattr(opt,'ckpt_path'):# just test the ckeckpoint, without training
+                trainer.test(model, data, ckpt_path = opt.ckpt_path)
+            else:# test the model after trainning
+                trainer.test(model, data)               
     except Exception:
-        if opt.debug and getrank() == 0:  # Use getrank() instead of trainer.global_rank
+        if opt.debug and trainer.global_rank == 0:
             try:
                 import pudb as debugger
             except ImportError:
@@ -809,10 +792,11 @@ if __name__ == "__main__":
             debugger.post_mortem()
         raise
     finally:
-        if opt.debug and getrank() == 0:  # Use getrank() instead of trainer.global_rank
+        # move newly created debug project to debug_runs
+        if opt.debug and not opt.resume and trainer.global_rank == 0:
             dst, name = os.path.split(logdir)
             dst = os.path.join(dst, "debug_runs", name)
             os.makedirs(os.path.split(dst)[0], exist_ok=True)
             os.rename(logdir, dst)
-        if 'trainer' in locals() and getrank() == 0:  # Check if trainer exists
+        if trainer.global_rank == 0:
             print(trainer.profiler.summary())
