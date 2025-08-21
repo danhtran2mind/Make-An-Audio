@@ -15,11 +15,9 @@ import ldm
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback,LearningRateMonitor
-from pytorch_lightning.utilities import rank_zero_only
-from pytorch_lightning.utilities import rank_zero_info
+from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from ldm.util import instantiate_from_config
-from pytorch_lightning.utilities.argparse import add_argparse_args
-
+from pytorch_lightning import Trainer
 
 
 def get_parser(**parser_kwargs):
@@ -150,8 +148,8 @@ def getrank():
 
 def nondefault_trainer_args(opt):
     parser = argparse.ArgumentParser()
-    # parser = Trainer.add_argparse_args(parser)
-    parser = add_argparse_args(Trainer, parser)
+    parser = Trainer.add_argparse_args(parser)
+    # parser = add_argparse_args(Trainer, parser)
     args = parser.parse_args([])
     return sorted(k for k in vars(args) if getattr(opt, k) != getattr(args, k))
 
