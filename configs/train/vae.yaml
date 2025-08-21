@@ -48,8 +48,8 @@ lightning:
           params:
             ckpt_vocoder: useful_ckpts/bigvgan
   trainer:
-    accelerator: gpu # cpu/gpu
-    devices: [0]  # or "auto" or [0,1] for 
+    strategy: ddp
+    gpus: 0,1,2,3,4,5,6,7
 
   
 data:
