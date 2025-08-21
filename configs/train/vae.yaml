@@ -46,7 +46,7 @@ lightning:
         vocoder_cfg:
           target: vocoder.bigvgan.models.VocoderBigVGAN
           params:
-            ckpt_vocoder: useful_ckpts/bigvnat
+            ckpt_vocoder: useful_ckpts/bigvgan
   trainer:
     strategy: ddp
     gpus: 0,1,2,3,4,5,6,7
