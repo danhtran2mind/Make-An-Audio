@@ -148,8 +148,17 @@ def getrank():
 
 def nondefault_trainer_args(opt):
     parser = argparse.ArgumentParser()
-    parser = Trainer.add_argparse_args(parser)
-    # parser = add_argparse_args(Trainer, parser)
+    # Add the same Trainer arguments as in get_parser
+    parser.add_argument("--accelerator", type=str, default="auto")
+    parser.add_argument("--devices", type=str, default="auto")
+    parser.add_argument("--max_epochs", type=int, default=None)
+    parser.add_argument("--min_epochs", type=int, default=None)
+    parser.add_argument("--max_steps", type=int, default=-1)
+    parser.add_argument("--accumulate_grad_batches", type=int, default=1)
+    parser.add_argument("--precision", type=str, default="32")
+    parser.add_argument("--strategy", type=str, default="auto")
+    parser.add_argument("--num_nodes", type=int, default=1)
+    parser.add_argument("--log_every_n_steps", type=int, default=50)
     args = parser.parse_args([])
     return sorted(k for k in vars(args) if getattr(opt, k) != getattr(args, k))
 
