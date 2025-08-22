@@ -54,7 +54,7 @@ model:
       params:
         embed_dim: 4
         monitor: val/rec_loss
-        ckpt_path: logs/2025-08-22T17-37-20_vae/checkpoints/last.ckpt
+        ckpt_path: logs/checkpoints/last.ckpt
         ddconfig:
           double_z: true
           z_channels: 4
