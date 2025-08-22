@@ -709,8 +709,7 @@ if __name__ == "__main__":
             del callbacks_cfg['ignore_keys_callback']
 
         trainer_kwargs["callbacks"] = [instantiate_from_config(callbacks_cfg[k]) for k in callbacks_cfg]
-
-
+        trainer_kwargs["limit_test_batches"] = 0
 
         trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
         trainer.logdir = logdir  
