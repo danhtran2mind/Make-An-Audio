@@ -102,7 +102,7 @@ def move_and_cleanup_files(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     num_processes: int,
-    dataset_dir: str,
+    dataset_name: str,
     data_dir: str
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -114,7 +114,7 @@ def move_and_cleanup_files(
         train_df (pd.DataFrame): Training DataFrame.
         val_df (pd.DataFrame): Validation DataFrame.
         num_processes (int): Number of processes for parallel file moving.
-        dataset_dir (str): Dataset directory name.
+        dataset_name (str): Dataset directory name.
         data_dir (str): Base directory for dataset storage.
 
     Returns:
@@ -122,8 +122,8 @@ def move_and_cleanup_files(
     """
     try:
         # Create train and test directories
-        train_dir = os.path.join(data_dir, dataset_dir, "audioset", "train")
-        test_dir = os.path.join(data_dir, dataset_dir, "audioset", "test")
+        train_dir = os.path.join(data_dir, dataset_name, "audioset", "train")
+        test_dir = os.path.join(data_dir, dataset_name, "audioset", "test")
         os.makedirs(train_dir, exist_ok=True)
         os.makedirs(test_dir, exist_ok=True)
         
@@ -213,21 +213,21 @@ def prepare_json_data(train_df: pd.DataFrame, val_df: pd.DataFrame) -> Tuple[Lis
         logger.error(f"Error preparing JSON data: {e}")
         raise
 
-def write_json_files(train_data: List[Dict[str, str]], val_data: List[Dict[str, str]], dataset_dir: str, data_dir: str) -> None:
+def write_json_files(train_data: List[Dict[str, str]], val_data: List[Dict[str, str]], dataset_name: str, data_dir: str) -> None:
     """
     Write train and validation data to JSON files.
 
     Args:
         train_data (List[Dict[str, str]]): Training data for JSON.
         val_data (List[Dict[str, str]]): Validation data for JSON.
-        dataset_dir (str): Dataset directory name.
+        dataset_name (str): Dataset directory name.
         data_dir (str): Base directory for dataset storage.
 
     Raises:
         Exception: If writing JSON files fails.
     """
     try:
-        json_dir = os.path.join(data_dir, dataset_dir, "audioset")
+        json_dir = os.path.join(data_dir, dataset_name, "audioset")
         os.makedirs(json_dir, exist_ok=True)
         
         with open(os.path.join(json_dir, "train.json"), "w") as f:
@@ -239,12 +239,12 @@ def write_json_files(train_data: List[Dict[str, str]], val_data: List[Dict[str, 
         logger.error(f"Error writing JSON files: {e}")
         raise
 
-def create_dataset_root_json(dataset_dir: str, data_dir: str) -> None:
+def create_dataset_root_json(dataset_name: str, data_dir: str) -> None:
     """
     Create dataset_root.json with metadata configuration.
 
     Args:
-        dataset_dir (str): Dataset directory name.
+        dataset_name (str): Dataset directory name.
         data_dir (str): Base directory for dataset storage.
 
     Raises:
@@ -252,19 +252,19 @@ def create_dataset_root_json(dataset_dir: str, data_dir: str) -> None:
     """
     try:
         dataset_root = {
-            "audiocaps": f"./{data_dir}/{dataset_dir}/audioset",
+            "audiocaps": f"./{data_dir}/{dataset_name}/audioset",
             "comments": {},
             "metadata": {
                 "path": {
                     "audiocaps": {
-                        "train": f"./{data_dir}/{dataset_dir}/audioset/train.json",
-                        "test": f"./{data_dir}/{dataset_dir}/audioset/test.json",
-                        "class_label_indices": f"../{data_dir}/{dataset_dir}/metadata/class_labels_indices.csv"
+                        "train": f"./{data_dir}/{dataset_name}/audioset/train.json",
+                        "test": f"./{data_dir}/{dataset_name}/audioset/test.json",
+                        "class_label_indices": f"../{data_dir}/{dataset_name}/metadata/class_labels_indices.csv"
                     }
                 }
             }
         }
-        metadata_dir = os.path.join(data_dir, dataset_dir, "metadata")
+        metadata_dir = os.path.join(data_dir, dataset_name, "metadata")
         os.makedirs(metadata_dir, exist_ok=True)
         
         with open(os.path.join(metadata_dir, "dataset_root.json"), "w") as f:
@@ -296,7 +296,7 @@ def get_audio_duration(file_path: str, sample_rate: int) -> float:
 def create_tsv_metadata(
     train_data: List[Dict[str, str]], 
     val_data: List[Dict[str, str]], 
-    dataset_dir: str,
+    dataset_name: str,
     sample_rate: int,
     data_dir: str
 ) -> None:
@@ -306,7 +306,7 @@ def create_tsv_metadata(
     Args:
         train_data (List[Dict[str, str]]): Training data with wav paths and captions.
         val_data (List[Dict[str, str]]): Validation data with wav paths and captions.
-        dataset_dir (str): Dataset directory name.
+        dataset_name (str): Dataset directory name.
         sample_rate (int): Sample rate for audio files (in Hz).
         data_dir (str): Base directory for dataset storage.
 
@@ -315,10 +315,12 @@ def create_tsv_metadata(
     """
     try:
         # Define output directories
-        audio_dir = os.path.join(data_dir, dataset_dir)
-        tsv_dir = os.path.join(data_dir, dataset_dir, "metadata")
+        audio_dir = os.path.join(data_dir, dataset_name)
+        tsv_dir = os.path.join(data_dir, dataset_name, "metadata")
         os.makedirs(tsv_dir, exist_ok=True)
-
+        
+        dataset_id = dataset_name.split("--")[1]
+        
         # Prepare TSV data for train set
         train_tsv_data = []
         for item in train_data:
@@ -327,7 +329,7 @@ def create_tsv_metadata(
                 duration = get_audio_duration(audio_path, sample_rate)
                 train_tsv_data.append({
                     "name": os.path.splitext(os.path.basename(item["wav"]))[0],
-                    "dataset": "audiocaps",
+                    "dataset": dataset_id,
                     "caption": item["caption"],
                     "audio_path": audio_path,
                     "duration": duration
@@ -341,7 +343,7 @@ def create_tsv_metadata(
                 duration = get_audio_duration(audio_path, sample_rate)
                 test_tsv_data.append({
                     "name": os.path.splitext(os.path.basename(item["wav"]))[0],
-                    "dataset": "audiocaps",
+                    "dataset": dataset_id,
                     "caption": item["caption"],
                     "audio_path": audio_path,
                     "duration": duration
@@ -397,22 +399,22 @@ def main(arg_process: int, dataset_id: str, data_dir: str, sample_rate: int) -> 
         logger.info(f"Using {num_processes} processes for parallel file operations.")
 
         # Process dataset_id to create directory name
-        dataset_dir = dataset_id.replace("/", "-")
-        raw_data_dir = os.path.join(data_dir, f"datasets--{dataset_dir}")
-        music_bench_dir = os.path.join(data_dir, dataset_dir, "audioset", "music_bench")
+        dataset_name = dataset_id.replace("/", "-")
+        raw_data_dir = os.path.join(data_dir, f"datasets--{dataset_name}")
+        music_bench_dir = os.path.join(data_dir, dataset_name, "audioset", "music_bench")
 
         # Execute pipeline
         train_df, val_df = load_and_clean_dataset(dataset_id)
         download_and_extract_dataset(dataset_id, raw_data_dir, music_bench_dir)
         train_df, val_df = move_and_cleanup_files(raw_data_dir, music_bench_dir, 
                                                   train_df, val_df, num_processes, 
-                                                  dataset_dir, data_dir)
+                                                  dataset_name, data_dir)
         train_data, val_data = prepare_json_data(train_df, val_df)
         
-        # write_json_files(train_data, val_data, dataset_dir, data_dir)
-        # create_dataset_root_json(dataset_dir, data_dir)
+        # write_json_files(train_data, val_data, dataset_name, data_dir)
+        # create_dataset_root_json(dataset_name, data_dir)
         
-        create_tsv_metadata(train_data, val_data, dataset_dir, sample_rate, data_dir)
+        create_tsv_metadata(train_data, val_data, dataset_name, sample_rate, data_dir)
 
         logger.info("Dataset processing and TSV metadata creation completed successfully.")
     except Exception as e:
