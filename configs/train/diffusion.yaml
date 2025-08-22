@@ -54,7 +54,7 @@ model:
       params:
         embed_dim: 4
         monitor: val/rec_loss
-        ckpt_path: save your pretrained vae path here
+        ckpt_path: logs/vae.ckpts
         ddconfig:
           double_z: true
           z_channels: 4
@@ -113,6 +113,8 @@ lightning:
     gradient_clip_val: 1.0
     strategy: ddp
     gpus: 0,1,2,3
+    max_epochs: 2
+    
   modelcheckpoint:
     params:
       monitor: epoch
