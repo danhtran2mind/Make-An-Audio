@@ -315,7 +315,7 @@ def create_tsv_metadata(
     """
     try:
         # Define output directories
-        audio_dir = os.path.join(data_dir, dataset_dir, "audioset")
+        audio_dir = os.path.join(data_dir, dataset_dir)
         tsv_dir = os.path.join(data_dir, dataset_dir, "metadata")
         os.makedirs(tsv_dir, exist_ok=True)
 
@@ -404,7 +404,9 @@ def main(arg_process: int, dataset_id: str, data_dir: str, sample_rate: int) -> 
         # Execute pipeline
         train_df, val_df = load_and_clean_dataset(dataset_id)
         download_and_extract_dataset(dataset_id, raw_data_dir, music_bench_dir)
-        train_df, val_df = move_and_cleanup_files(raw_data_dir, music_bench_dir, train_df, val_df, num_processes, dataset_dir, data_dir)
+        train_df, val_df = move_and_cleanup_files(raw_data_dir, music_bench_dir, 
+                                                  train_df, val_df, num_processes, 
+                                                  dataset_dir, data_dir)
         train_data, val_data = prepare_json_data(train_df, val_df)
         
         # write_json_files(train_data, val_data, dataset_dir, data_dir)
