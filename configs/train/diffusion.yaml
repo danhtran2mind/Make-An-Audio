@@ -122,9 +122,9 @@ lightning:
       save_top_k: 8
       every_n_epochs: 8
 
-test_dataset:
-  target: ldm.data.tsvdataset.TSVDataset
-  params:
-    tsv_path: data/audiocaps_test.tsv
-    spec_crop_len: 624
+# test_dataset:
+#   target: ldm.data.tsvdataset.TSVDataset
+#   params:
+#     tsv_path: data/audiocaps_test.tsv
+#     spec_crop_len: 624
 
