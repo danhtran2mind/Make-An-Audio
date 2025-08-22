@@ -113,7 +113,6 @@ lightning:
     gradient_clip_val: 1.0
     strategy: ddp
     gpus: 0,1,2,3
-    max_epochs: 2
     
   modelcheckpoint:
     params:
