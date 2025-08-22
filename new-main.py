@@ -589,6 +589,7 @@ if __name__ == "__main__":
 
         # default logger configs
         default_logger_cfgs = {
+            "max_steps": 100,
             "wandb": {
                 "target": "pytorch_lightning.loggers.WandbLogger",
                 "params": {
