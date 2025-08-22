@@ -15,8 +15,8 @@ import ldm
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback,LearningRateMonitor
-from pytorch_lightning.utilities.distributed import rank_zero_only
-from pytorch_lightning.utilities import rank_zero_info
+# from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
 from ldm.util import instantiate_from_config
 
 
@@ -768,8 +768,8 @@ if __name__ == "__main__":
         # run
         if opt.train:
             try:
-                if hasattr(opt,'ckpt_path'):
-                    trainer.fit(model, data,ckpt_path = opt.ckpt_path)
+                if hasattr(opt, 'ckpt_path'):
+                    trainer.fit(model, data, ckpt_path=opt.ckpt_path)
                 else:
                     trainer.fit(model, data)
             except Exception:
@@ -777,19 +777,16 @@ if __name__ == "__main__":
                 raise
         elif opt.val:
             trainer.validate(model, data)
-        if not opt.no_test and not trainer.interrupted:
-            if not opt.train and hasattr(opt,'ckpt_path'):# just test the ckeckpoint, without training
-                trainer.test(model, data, ckpt_path = opt.ckpt_path)
-            else:# test the model after trainning
-                trainer.test(model, data)               
-    except Exception:
-        if opt.debug and trainer.global_rank == 0:
+        
+        if not opt.no_test and not trainer.interrupted and hasattr(data, 'test_dataloader'):
             try:
-                import pudb as debugger
-            except ImportError:
-                import pdb as debugger
-            debugger.post_mortem()
-        raise
+                if not opt.train and hasattr(opt, 'ckpt_path'):
+                    trainer.test(model, data, ckpt_path=opt.ckpt_path)
+                else:
+                    trainer.test(model, data)
+            except Exception:
+                melk()
+                raise
     finally:
         # move newly created debug project to debug_runs
         if opt.debug and not opt.resume and trainer.global_rank == 0:
